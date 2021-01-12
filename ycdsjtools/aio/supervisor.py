@@ -1,8 +1,45 @@
 import asyncio
 import time
-from logging import Logger, getLogger
+from logging import Logger, getLogger, root as logging_root
 from dataclasses import dataclass
 from typing import List, Callable, Awaitable, Coroutine, Set
+
+
+async def run_supervised(target, args=(), kwargs={}, *,
+                         name: str = '<unnamed>',
+                         log_exception: bool = False,
+                         logger: Logger = logging_root,
+                         restart_always: bool = True,
+                         restart_time: float = 1.0):
+    last_run = 0
+    loop = asyncio.get_running_loop()
+
+    try:
+        logger.info('%s task enter', name)
+        while True:
+            try:
+                now = loop.time()
+                dif = now - last_run
+                if dif < restart_time:
+                    await asyncio.sleep(restart_time - dif)
+
+                last_run = loop.time()
+                await target(*args, **kwargs)
+
+                # restart_always is there in case we want to run 'once' successfully (without exceptions) then exit
+                if not restart_always:
+                    break
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception as exc:
+                if log_exception:
+                    logger.exception('%s raised exception: %s', name, exc, exc_info=exc)
+                else:
+                    logger.warning('%s raised exception: %s', name, exc)
+    finally:
+        logger.info('%s task leave', name)
 
 
 @dataclass
