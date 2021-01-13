@@ -24,7 +24,7 @@ class AioEventQueue(Generic[T], asyncio.Queue):
         self._broker.unregister(self)
 
 
-class  (Generic[T]):
+class AioEventBroker(Generic[T]):
     """A broker for events, it sends the events to the registered EventQueues"""
 
     def __init__(self, name: str, logger: logging.Logger = None):
