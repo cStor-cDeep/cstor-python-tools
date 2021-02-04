@@ -2,20 +2,45 @@ import asyncio
 import time
 from logging import Logger, getLogger, root as logging_root
 from dataclasses import dataclass
-from typing import List, Callable, Awaitable, Coroutine, Set
+from typing import List, Callable, Awaitable, Coroutine, Set, Any
 
 
-async def run_supervised(target, args=(), kwargs={}, *,
+async def run_supervised(target, args=(), kwargs=None, *,
                          name: str = '<unnamed>',
+                         log_lifecycle: bool = True,
                          log_exception: bool = False,
                          logger: Logger = logging_root,
                          restart_always: bool = True,
-                         restart_time: float = 1.0):
+                         restart_time: float = 1.0) -> Any:
+    """Runs a coroutine supervised to ensure it is restarted when it fails or that it runs successfuly once.
+
+    The `name`, `log_lifecycle`, `log_exception` and `logger` parameters are used for application maintenance, it will
+    help you identify who failed when problems happens.
+
+    The `restart_always` and `restart_time` allows you to control the supervision mode.
+
+    :param target: callable object to be invoked
+    :param args: argument tuple for the target invocation, defaults to ()
+    :param kwargs: dictionary of keyword arguments for the target invocation, defaults to {}
+    :param name: name used in logs so you can differenciate which function is running or throwed exception
+    :param log_lifecycle: whether to log the 'enter' or 'leave' changes
+    :param log_exception: if the callable throws exception, whether to log the stacktrace (True) or just a warning (False, default)
+    :param logger: the logger to use for messages, defauls to the root logger
+    :param restart_always: whether to restart always (True, default) or just run once successfully (False)
+    :param restart_time: minimum time between invocation starts.
+    :return: when restart_always is False, will return the result of the successfull invocation of target, otherwise this function never returns.
+    """
+    if kwargs is None:
+        kwargs = {}
+
     last_run = 0
     loop = asyncio.get_running_loop()
+    result: Any
 
     try:
-        logger.info('%s task enter', name)
+        if log_lifecycle:
+            logger.info('%s task enter', name)
+
         while True:
             try:
                 now = loop.time()
@@ -24,11 +49,11 @@ async def run_supervised(target, args=(), kwargs={}, *,
                     await asyncio.sleep(restart_time - dif)
 
                 last_run = loop.time()
-                await target(*args, **kwargs)
+                result = await target(*args, **kwargs)
 
                 # restart_always is there in case we want to run 'once' successfully (without exceptions) then exit
                 if not restart_always:
-                    break
+                    return result
 
             except asyncio.CancelledError:
                 raise
@@ -39,7 +64,8 @@ async def run_supervised(target, args=(), kwargs={}, *,
                 else:
                     logger.warning('%s raised exception: %s', name, exc)
     finally:
-        logger.info('%s task leave', name)
+        if log_lifecycle:
+            logger.info('%s task leave', name)
 
 
 @dataclass
