@@ -2,7 +2,7 @@ import asyncio
 import time
 from logging import Logger, getLogger, root as logging_root
 from dataclasses import dataclass
-from typing import List, Callable, Awaitable, Coroutine, Set, Any
+from typing import List, Callable, Awaitable, Coroutine, Set, Any, Optional
 
 
 async def run_supervised(target, args=(), kwargs=None, *,
@@ -11,7 +11,8 @@ async def run_supervised(target, args=(), kwargs=None, *,
                          log_exception: bool = False,
                          logger: Logger = logging_root,
                          restart_always: bool = True,
-                         restart_time: float = 1.0) -> Any:
+                         restart_time: float = 1.0,
+                         cancel_event: Optional[asyncio.Event] = None) -> Any:
     """Runs a coroutine supervised to ensure it is restarted when it fails or that it runs successfuly once.
 
     The `name`, `log_lifecycle`, `log_exception` and `logger` parameters are used for application maintenance, it will
@@ -19,16 +20,21 @@ async def run_supervised(target, args=(), kwargs=None, *,
 
     The `restart_always` and `restart_time` allows you to control the supervision mode.
 
+    `cancel_event` may help with bad behaving tasks which doesn't raise CancelledError when cancelled.
+
     :param target: callable object to be invoked
     :param args: argument tuple for the target invocation, defaults to ()
     :param kwargs: dictionary of keyword arguments for the target invocation, defaults to {}
     :param name: name used in logs so you can differenciate which function is running or throwed exception
     :param log_lifecycle: whether to log the 'enter' or 'leave' changes
-    :param log_exception: if the callable throws exception, whether to log the stacktrace (True) or just a warning (False, default)
+    :param log_exception: if the callable throws exception, whether to log the stacktrace (True) or just a warning
+     (False, default)
     :param logger: the logger to use for messages, defauls to the root logger
     :param restart_always: whether to restart always (True, default) or just run once successfully (False)
     :param restart_time: minimum time between invocation starts.
-    :return: when restart_always is False, will return the result of the successfull invocation of target, otherwise this function never returns.
+    :param cancel_event: optional event used to check whether to continue restarting or raise CancelledError.
+    :return: when restart_always is False, will return the result of the successfull invocation of target, otherwise
+     this function never returns.
     """
     if kwargs is None:
         kwargs = {}
@@ -42,6 +48,9 @@ async def run_supervised(target, args=(), kwargs=None, *,
             logger.info('%s task enter', name)
 
         while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise asyncio.CancelledError()
+
             try:
                 now = loop.time()
                 dif = now - last_run
@@ -66,6 +75,35 @@ async def run_supervised(target, args=(), kwargs=None, *,
     finally:
         if log_lifecycle:
             logger.info('%s task leave', name)
+
+
+class CancelTaskWarning(Exception):
+    """Exception thrown when something happened cancelling a task"""
+
+
+async def cancel_task(task: Optional[asyncio.Task], timeout: Optional[float] = None) -> None:
+    """Tryes to cancel a task, optionally with a timeout.
+
+    If there was no task or it was already done, then nothing happens.
+
+    If we do actually cancel the task, we expect it to behave and cancel properly, otherwise `CancelTaskWarning`
+    will be raised.
+
+    :param task: the task to cancel
+    :param timeout: optional max time to wait for the cancellation
+    """
+    if task is not None and not task.done():
+        task.cancel()
+
+        if len((await asyncio.wait((task,), timeout=timeout))[0]) == 1:
+            if not task.cancelled():
+                exc = task.exception()
+                if exc is None:
+                    raise CancelTaskWarning("Cancelled task finished normally (should be cancelled)")
+                else:
+                    raise CancelTaskWarning(f"Cancelled task threw exception: {repr(exc)}") from exc
+        else:
+            raise CancelTaskWarning("Cancel timeout, I give up.")
 
 
 @dataclass
