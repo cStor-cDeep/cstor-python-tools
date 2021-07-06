@@ -12,6 +12,7 @@ async def run_supervised(target, args=(), kwargs=None, *,
                          logger: Logger = logging_root,
                          restart_always: bool = True,
                          restart_time: float = 1.0,
+                         initial_delay: float = 0.0,
                          cancel_event: Optional[asyncio.Event] = None) -> Any:
     """Runs a coroutine supervised to ensure it is restarted when it fails or that it runs successfuly once.
 
@@ -32,6 +33,7 @@ async def run_supervised(target, args=(), kwargs=None, *,
     :param logger: the logger to use for messages, defauls to the root logger
     :param restart_always: whether to restart always (True, default) or just run once successfully (False)
     :param restart_time: minimum time between invocation starts.
+    :param initial_delay: delay time before running the coroutine the first time. Defaults to no delay.
     :param cancel_event: optional event used to check whether to continue restarting or raise CancelledError.
     :return: when restart_always is False, will return the result of the successfull invocation of target, otherwise
      this function never returns.
@@ -46,6 +48,9 @@ async def run_supervised(target, args=(), kwargs=None, *,
     try:
         if log_lifecycle:
             logger.info('%s task enter', name)
+
+        if initial_delay > 0:
+            await asyncio.sleep(initial_delay)
 
         while True:
             if cancel_event is not None and cancel_event.is_set():
